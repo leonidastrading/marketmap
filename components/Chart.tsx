@@ -129,8 +129,11 @@ export default function Chart({
       g.lineTo(x, padT + plotH);
       g.stroke();
       g.fillStyle = C.axis;
+      // The first mark sits on the left edge, so centring it clips the label.
+      g.textAlign = bar === 0 ? "left" : "center";
       g.fillText(label, x, padT + plotH + 13);
     }
+    g.textAlign = "center";
 
     // ---- matching window shading ----------------------------------------
     g.fillStyle = "rgba(242, 180, 65, 0.06)";

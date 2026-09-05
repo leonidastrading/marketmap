@@ -97,7 +97,11 @@ export default function Page() {
     }
     const agreement = last ? Math.max(up, last - up) / last : 0;
     const h = projection.p10.length - 1;
-    const spread = ((projection.p90[h] - projection.p10[h]) / anchor) * 100;
+    // With a handful of analogs the 10th and 90th percentile collapse toward
+    // the same value, so the number reads as certainty rather than as too
+    // small a sample.
+    const spread =
+      last >= 5 ? ((projection.p90[h] - projection.p10[h]) / anchor) * 100 : null;
     const bestPos = result.positive[0]?.corr ?? 0;
     const bestNeg = result.negative[0]?.corr ?? 0;
     const ambiguous = Math.abs(bestPos) > 0.85 && Math.abs(bestNeg) > 0.85;
@@ -349,7 +353,11 @@ export default function Page() {
                 </div>
                 <div>
                   <dt>10–90 spread</dt>
-                  <dd>{diag.spread.toFixed(2)}%</dd>
+                  <dd>
+                    {diag.spread === null
+                      ? `— (needs 5+ analogs)`
+                      : `${diag.spread.toFixed(2)}%`}
+                  </dd>
                 </div>
               </dl>
               <p className={diag.ambiguous || diag.agreement < 0.6 ? "flag" : "note"}>
