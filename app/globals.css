@@ -351,3 +351,69 @@ dd {
   color: var(--ink);
   border-color: var(--line);
 }
+
+/* ---- dual-handle window slider --------------------------------------- */
+.range2 {
+  position: relative;
+  height: 26px;
+}
+
+.range2 .track,
+.range2 .fill {
+  position: absolute;
+  top: 11px;
+  height: 4px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.range2 .track {
+  left: 0;
+  right: 0;
+  background: var(--line);
+}
+
+.range2 .fill {
+  background: var(--today);
+}
+
+/* Two overlaid inputs: the tracks are transparent and ignore the pointer,
+   so only the thumbs are grabbable and either handle can be picked up. */
+.range2 input[type="range"] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 26px;
+  margin: 0;
+  background: none;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.range2 input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  pointer-events: auto;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--today);
+  border: 2px solid var(--ground);
+  cursor: grab;
+}
+
+.range2 input[type="range"]::-moz-range-thumb {
+  pointer-events: auto;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--today);
+  border: 2px solid var(--ground);
+  cursor: grab;
+}
+
+.range2 input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}

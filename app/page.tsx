@@ -35,8 +35,8 @@ export default function Page() {
 
   const [targetIdx, setTargetIdx] = useState(0);
   const [t, setT] = useState(1020);
-  const [windowMins, setWindowMins] = useState(120);
-  const [anchored, setAnchored] = useState(false);
+  const [fromBar, setFromBar] = useState(900);
+  const [locked, setLocked] = useState(false);
   const [topK, setTopK] = useState(25);
   const [metric, setMetric] = useState<Metric>("pearson");
   const [inverse, setInverse] = useState(false);
@@ -58,16 +58,34 @@ export default function Page() {
     if (!playing) return;
     const id = setInterval(() => {
       setT((v) => {
-        const next = v + 5;
-        return next >= SESSION_BARS - 30 ? SESSION_BARS - 30 : next;
+        const next = Math.min(v + 5, SESSION_BARS - 30);
+        if (!locked) setFromBar((f) => Math.max(0, f + (next - v)));
+        return next;
       });
     }, 90);
     return () => clearInterval(id);
-  }, [playing]);
+  }, [playing, locked]);
 
   useEffect(() => {
     if (t >= SESSION_BARS - 30) setPlaying(false);
   }, [t]);
+
+  const windowMins = t - fromBar + 1;
+
+  // Unlocked, the start trails "now" and the window keeps its length.
+  // Locked, the start stays put and the window grows as the session runs.
+  function moveNow(next: number) {
+    const n = Math.max(fromBar + 15, Math.min(SESSION_BARS - 30, next));
+    if (!locked) setFromBar(Math.max(0, n - (t - fromBar)));
+    setT(n);
+  }
+  function moveFrom(next: number) {
+    setFromBar(Math.max(0, Math.min(t - 15, next)));
+  }
+  function preset(mins: number) {
+    setLocked(false);
+    setFromBar(Math.max(0, t - mins + 1));
+  }
 
   const target = corpus?.[targetIdx] ?? null;
   const history = useMemo(
@@ -80,12 +98,12 @@ export default function Page() {
     return scan(target, history, {
       t,
       windowMinutes: windowMins,
-      anchored,
+      anchored: false,
       topK,
       metric,
       excludeNearDays: 3,
     });
-  }, [target, history, t, windowMins, anchored, topK, metric]);
+  }, [target, history, t, windowMins, topK, metric]);
 
   const matches = inverse ? result?.negative : result?.positive;
 
@@ -155,7 +173,7 @@ export default function Page() {
       const r = backtest(corpus, {
         t,
         windowMinutes: windowMins,
-        anchored,
+        anchored: false,
         topK,
         metric,
         excludeNearDays: 3,
@@ -228,68 +246,81 @@ export default function Page() {
           </div>
 
           <div className="row">
-            <label htmlFor="t">
-              Now <b>{barLabel(t)}</b>
+            <label>
+              Window{" "}
+              <b>
+                {barLabel(fromBar)}\u2013{barLabel(t)} \u00b7 {fmtDur(windowMins)}
+              </b>
             </label>
-            <input
-              id="t"
-              type="range"
-              min={60}
-              max={SESSION_BARS - 30}
-              value={t}
-              onChange={(e) => setT(+e.target.value)}
-            />
-            <div className="btns">
-              <button onClick={() => setPlaying((p) => !p)}>
-                {playing ? "Pause" : "Replay"}
-              </button>
-              <button onClick={() => setT(RTH_OPEN_BAR)}>Cash open</button>
-            </div>
-          </div>
 
-          <div className="row">
-            <label htmlFor="w">
-              Lookback{" "}
-              <b>{anchored ? "since session open" : fmtDur(windowMins)}</b>
+            <div className="range2">
+              <div className="track" />
+              <div
+                className="fill"
+                style={{
+                  left: `${(fromBar / (SESSION_BARS - 1)) * 100}%`,
+                  right: `${100 - (t / (SESSION_BARS - 1)) * 100}%`,
+                }}
+              />
+              <input
+                aria-label="Window start"
+                type="range"
+                min={0}
+                max={SESSION_BARS - 45}
+                value={fromBar}
+                onChange={(e) => moveFrom(+e.target.value)}
+              />
+              <input
+                aria-label="Now"
+                type="range"
+                min={30}
+                max={SESSION_BARS - 30}
+                value={t}
+                onChange={(e) => moveNow(+e.target.value)}
+              />
+            </div>
+
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={locked}
+                onChange={(e) => setLocked(e.target.checked)}
+              />
+              Lock start in place
             </label>
-            <input
-              id="w"
-              type="range"
-              min={15}
-              max={480}
-              step={15}
-              value={windowMins}
-              disabled={anchored}
-              onChange={(e) => setWindowMins(+e.target.value)}
-            />
+            <p className="note">
+              {locked
+                ? "The start is pinned. Moving now, or replaying, grows the window."
+                : "The start trails now, keeping the window the same length."}
+            </p>
+
             <div className="btns">
               {[30, 60, 120, 240].map((m) => (
                 <button
                   key={m}
-                  className={!anchored && windowMins === m ? "on" : ""}
-                  onClick={() => {
-                    setAnchored(false);
-                    setWindowMins(m);
-                  }}
+                  className={windowMins === m && !locked ? "on" : ""}
+                  onClick={() => preset(m)}
                 >
                   {fmtDur(m)}
                 </button>
               ))}
+              <button
+                className={fromBar === 0 ? "on" : ""}
+                onClick={() => {
+                  setFromBar(0);
+                  setLocked(true);
+                }}
+              >
+                Open
+              </button>
             </div>
-            {result && (
-              <p className="note">
-                Matching {barLabel(result.lo)}–{barLabel(result.hi)} against the
-                same clock window on every past session.
-              </p>
-            )}
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={anchored}
-                onChange={(e) => setAnchored(e.target.checked)}
-              />
-              Match from session open instead
-            </label>
+
+            <div className="btns">
+              <button onClick={() => setPlaying((p) => !p)}>
+                {playing ? "Pause" : "Replay"}
+              </button>
+              <button onClick={() => moveNow(RTH_OPEN_BAR)}>Cash open</button>
+            </div>
           </div>
 
           <div className="row">
