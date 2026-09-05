@@ -44,7 +44,7 @@ const t = 1020; // ~12:00 ET, 90 minutes into the RTH afternoon
 for (const W of [30, 60, 120, 240]) {
   const res = scan(target, history, {
     t,
-    windowBars: W,
+    windowMinutes: W,
     anchored: false,
     topK: 25,
     metric: "pearson",
@@ -58,7 +58,7 @@ for (const W of [30, 60, 120, 240]) {
 
 const res = scan(target, history, {
   t,
-  windowBars: 120,
+  windowMinutes: 120,
   anchored: false,
   topK: 25,
   metric: "pearson",
@@ -92,7 +92,7 @@ console.log(
 console.log("\nwalk-forward backtest on driftless random walks:");
 const bt = backtest(corpus, {
   t,
-  windowBars: 120,
+  windowMinutes: 120,
   anchored: false,
   topK: 25,
   metric: "pearson",

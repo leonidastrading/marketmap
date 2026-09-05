@@ -167,7 +167,7 @@ function run(corpus: NormDay[], startFrac: number, maxDays: number): Out {
 
     const res = scan(test, history, {
       t: MATCH_BAR,
-      windowBars: WINDOW,
+      windowMinutes: WINDOW,
       anchored: false,
       topK: TOPK,
       metric: "pearson",

@@ -29,9 +29,12 @@ indicator("Analog session projection", "Analogs", overlay = true,
 
 // ------------------------------------------------------------------- inputs
 var string GM = "Matching"
-winBars  = input.int(120, "Lookback (bars)", minval = 10, maxval = 600, group = GM,
-     tooltip = "How much of the current session to match on. Shorter windows " +
-               "find higher correlations that mean less.")
+winMins  = input.int(120, "Lookback (minutes)", minval = 15, maxval = 480,
+     step = 15, group = GM,
+     tooltip = "How much of the current session to match on, in clock time. " +
+               "Minutes rather than bars so the window means the same thing " +
+               "whether you are on a 1-minute or a 15-minute chart. Shorter " +
+               "windows find higher correlations that mean less.")
 anchored = input.bool(false, "Match from session open instead", group = GM)
 topK     = input.int(10, "Analogs to project", minval = 1, maxval = 40, group = GM)
 useInv   = input.bool(false, "Use inverse analogs", group = GM,
@@ -60,6 +63,8 @@ colNeg    = input.color(#E8618C, "Inverse", group = GD)
 
 barSec = timeframe.in_seconds(timeframe.period)
 SLOTS  = math.max(10, math.min(1600, int(sessHours * 3600 / barSec)))
+// Clock minutes -> slots on this timeframe.
+winBars = math.max(10, int(winMins * 60 / barSec))
 ROWS   = math.max(5, math.min(maxSess, int(90000 / SLOTS)))
 
 var matrix<float> hist     = matrix.new<float>(ROWS, SLOTS, na)

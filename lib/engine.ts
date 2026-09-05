@@ -79,8 +79,9 @@ export type Metric = "pearson" | "euclid";
 export interface ScanOptions {
   /** Current bar index — "now". */
   t: number;
-  /** Lookback length in bars. Ignored when `anchored` is true. */
-  windowBars: number;
+  /** Lookback length in minutes. Slots are minutes-since-anchor, so this is
+   *  timeframe-independent. Ignored when `anchored` is true. */
+  windowMinutes: number;
   /** Match the whole session-to-date (0..t) instead of a trailing window. */
   anchored: boolean;
   topK: number;
@@ -171,7 +172,7 @@ export function scan(
   opts: ScanOptions
 ): ScanResult {
   const { t, anchored, topK, metric } = opts;
-  const lo = anchored ? 0 : Math.max(0, t - opts.windowBars + 1);
+  const lo = anchored ? 0 : Math.max(0, t - opts.windowMinutes + 1);
   const hi = t;
   const w = hi - lo + 1;
 

@@ -345,3 +345,9 @@ dd {
     transition: none !important;
   }
 }
+
+.btns button.on {
+  background: var(--line);
+  color: var(--ink);
+  border-color: var(--line);
+}

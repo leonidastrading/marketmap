@@ -15,6 +15,14 @@ import {
 } from "../lib/engine";
 import { syntheticCorpus, parseBars } from "../lib/data";
 
+/** 90 -> "1h 30m". Traders think in clock time, not bar counts. */
+function fmtDur(mins: number) {
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const r = mins % 60;
+  return r ? `${h}h ${r}m` : `${h}h`;
+}
+
 function barLabel(bar: number) {
   const m = (bar + 18 * 60) % (24 * 60);
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
@@ -27,7 +35,7 @@ export default function Page() {
 
   const [targetIdx, setTargetIdx] = useState(0);
   const [t, setT] = useState(1020);
-  const [windowBars, setWindowBars] = useState(120);
+  const [windowMins, setWindowMins] = useState(120);
   const [anchored, setAnchored] = useState(false);
   const [topK, setTopK] = useState(25);
   const [metric, setMetric] = useState<Metric>("pearson");
@@ -71,13 +79,13 @@ export default function Page() {
     if (!target || history.length < 20) return null;
     return scan(target, history, {
       t,
-      windowBars,
+      windowMinutes: windowMins,
       anchored,
       topK,
       metric,
       excludeNearDays: 3,
     });
-  }, [target, history, t, windowBars, anchored, topK, metric]);
+  }, [target, history, t, windowMins, anchored, topK, metric]);
 
   const matches = inverse ? result?.negative : result?.positive;
 
@@ -111,6 +119,7 @@ export default function Page() {
       bestPos,
       bestNeg,
       ambiguous,
+      thin: last < 5,
       direction: up > last - up ? "higher" : "lower",
     };
   }, [projection, target, result, t]);
@@ -145,7 +154,7 @@ export default function Page() {
     setTimeout(() => {
       const r = backtest(corpus, {
         t,
-        windowBars,
+        windowMinutes: windowMins,
         anchored,
         topK,
         metric,
@@ -240,18 +249,39 @@ export default function Page() {
 
           <div className="row">
             <label htmlFor="w">
-              Lookback <b>{anchored ? "session to date" : `${windowBars} bars`}</b>
+              Lookback{" "}
+              <b>{anchored ? "since session open" : fmtDur(windowMins)}</b>
             </label>
             <input
               id="w"
               type="range"
-              min={20}
+              min={15}
               max={480}
-              step={10}
-              value={windowBars}
+              step={15}
+              value={windowMins}
               disabled={anchored}
-              onChange={(e) => setWindowBars(+e.target.value)}
+              onChange={(e) => setWindowMins(+e.target.value)}
             />
+            <div className="btns">
+              {[30, 60, 120, 240].map((m) => (
+                <button
+                  key={m}
+                  className={!anchored && windowMins === m ? "on" : ""}
+                  onClick={() => {
+                    setAnchored(false);
+                    setWindowMins(m);
+                  }}
+                >
+                  {fmtDur(m)}
+                </button>
+              ))}
+            </div>
+            {result && (
+              <p className="note">
+                Matching {barLabel(result.lo)}–{barLabel(result.hi)} against the
+                same clock window on every past session.
+              </p>
+            )}
             <label className="check">
               <input
                 type="checkbox"
@@ -360,12 +390,14 @@ export default function Page() {
                   </dd>
                 </div>
               </dl>
-              <p className={diag.ambiguous || diag.agreement < 0.6 ? "flag" : "note"}>
-                {diag.ambiguous
-                  ? "The best positive and best inverse analogs are both near ±1. The window is too short to discriminate — this is curve fitting, not a signal."
-                  : diag.agreement < 0.6
-                    ? "The analogs disagree on direction. There is no directional read here, only a range."
-                    : "Analogs broadly agree. Check the backtest before acting on it."}
+              <p className={diag.ambiguous || diag.agreement < 0.6 || diag.thin ? "flag" : "note"}>
+                {diag.thin
+                  ? `${projection?.lines.length} analog${projection?.lines.length === 1 ? "" : "s"} is not a sample. One path agreeing with itself is not agreement — raise the count to at least 10.`
+                  : diag.ambiguous
+                    ? "The best positive and best inverse analogs are both near ±1. The window is too short to discriminate — this is curve fitting, not a signal."
+                    : diag.agreement < 0.6
+                      ? "The analogs disagree on direction. There is no directional read here, only a range."
+                      : "Analogs broadly agree. Check the backtest before acting on it."}
               </p>
             </>
           )}
