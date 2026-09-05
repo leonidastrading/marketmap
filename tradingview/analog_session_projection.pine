@@ -1,0 +1,265 @@
+//@version=6
+// =============================================================================
+// Analog session projection
+//
+// Stores each completed session as a normalised path, then finds the stored
+// sessions whose shape best matches the session in progress and draws their
+// remainder forward from the current bar.
+//
+// WHAT THIS CAN AND CANNOT DO
+//
+// TradingView caps intraday chart history by plan: 5k bars (Basic), 10k
+// (Essential/Plus), 20k (Premium), 25k (Expert), 30k (Elite), 40k (Ultimate).
+// A 23-hour ES session is 1380 one-minute bars, so even Premium holds only
+// ~14 sessions on a 1-minute chart. That is not a deep analog corpus.
+//
+// Sessions available at 20,000 bars:
+//     1 min  ->   14        5 min  ->   72
+//    15 min  ->  217       30 min  ->  435
+//
+// If you want a few years of 1-minute analogs, that has to happen off-platform.
+// What this script is genuinely good for is the live half: it runs on your
+// existing feed, costs nothing, and updates on every tick.
+//
+// Read the diagnostics label before you read the projection.
+// =============================================================================
+
+indicator("Analog session projection", "Analogs", overlay = true,
+     max_polylines_count = 100, max_lines_count = 50, max_labels_count = 5)
+
+// ------------------------------------------------------------------- inputs
+var string GM = "Matching"
+winBars  = input.int(120, "Lookback (bars)", minval = 10, maxval = 600, group = GM,
+     tooltip = "How much of the current session to match on. Shorter windows " +
+               "find higher correlations that mean less.")
+anchored = input.bool(false, "Match from session open instead", group = GM)
+topK     = input.int(10, "Analogs to project", minval = 1, maxval = 40, group = GM)
+useInv   = input.bool(false, "Use inverse analogs", group = GM,
+     tooltip = "Projects the best anti-correlated sessions, flipped.")
+volScale = input.bool(true, "Rescale by volatility ratio", group = GM,
+     tooltip = "Correlation ignores magnitude, so a quiet day can match a wild " +
+               "one at 1.00. This scales each analog's forward path by " +
+               "current vol / analog vol before drawing it.")
+
+var string GS = "Session"
+sessHours = input.float(23.0, "Session length (hours)", minval = 0.5, maxval = 24.0,
+     step = 0.5, group = GS, tooltip = "23 for CME futures, 6.5 for RTH-only equities.")
+maxSess   = input.int(40, "Sessions to keep", minval = 5, maxval = 200, group = GS)
+
+var string GD = "Display"
+showPaths = input.bool(true,  "Individual analog paths", group = GD)
+showBand  = input.bool(true,  "10-90 band",              group = GD)
+showStats = input.bool(true,  "Diagnostics label",       group = GD)
+colPos    = input.color(#4CC9E8, "Analog",  group = GD)
+colNeg    = input.color(#E8618C, "Inverse", group = GD)
+
+// -------------------------------------------------------------- session store
+// Paths accumulate forward into a matrix rather than being read back with the
+// history-referencing operator, so max_bars_back is not a constraint here.
+// The chart's own loaded history is.
+
+barSec = timeframe.in_seconds(timeframe.period)
+SLOTS  = math.max(10, math.min(1600, int(sessHours * 3600 / barSec)))
+ROWS   = math.max(5, math.min(maxSess, int(90000 / SLOTS)))
+
+var matrix<float> hist     = matrix.new<float>(ROWS, SLOTS, na)
+var array<float>  cur      = array.new<float>(SLOTS, na)
+var int           writeRow = 0
+var int           filled   = 0
+var float         sessOpen = na
+var int           sessStart = na
+
+newSess = barstate.isfirst or time_tradingday != time_tradingday[1]
+
+if newSess
+    if not na(sessOpen)
+        // Forward-fill on commit so a missing print does not punch a hole in
+        // the stored path.
+        float lastV = na
+        for i = 0 to SLOTS - 1
+            float v = array.get(cur, i)
+            if not na(v)
+                lastV := v
+            matrix.set(hist, writeRow, i, lastV)
+        writeRow := (writeRow + 1) % ROWS
+        filled   := math.min(filled + 1, ROWS)
+    for i = 0 to SLOTS - 1
+        array.set(cur, i, na)
+    sessOpen  := open
+    sessStart := time
+
+// Slot is derived from elapsed clock time, not bar count, so a session with
+// gaps still lines up against one without them.
+slot = na(sessStart) ? 0 : int((time - sessStart) / (barSec * 1000))
+if slot >= 0 and slot < SLOTS and not na(sessOpen) and sessOpen > 0
+    array.set(cur, slot, math.log(close / sessOpen))
+
+// ------------------------------------------------------------------ drawing
+var array<polyline> pls = array.new<polyline>()
+var label           lbl = na
+
+if barstate.islast
+    for pl in pls
+        polyline.delete(pl)
+    array.clear(pls)
+    label.delete(lbl)
+
+    int hi = math.min(slot, SLOTS - 2)
+    int lo = anchored ? 0 : math.max(0, hi - winBars + 1)
+    int w  = hi - lo + 1
+
+    if w >= 10 and filled >= 5
+        // ---- current window, rebased to its own start
+        float tBase = nz(array.get(cur, lo))
+        array<float> tp = array.new<float>(0)
+        for i = lo to hi
+            float v = array.get(cur, i)
+            array.push(tp, na(v) ? 0.0 : v - tBase)
+
+        float tMean = array.avg(tp)
+        float tSs   = 0.0
+        for i = 0 to w - 1
+            tSs += math.pow(array.get(tp, i) - tMean, 2)
+        float tSd = math.sqrt(tSs / w)
+
+        // Mean of first differences telescopes to (last - first) / (w - 1).
+        float tDm = (array.get(tp, w - 1) - array.get(tp, 0)) / (w - 1)
+        float tVs = 0.0
+        for i = 1 to w - 1
+            tVs += math.pow(array.get(tp, i) - array.get(tp, i - 1) - tDm, 2)
+        float tVol = math.sqrt(tVs / (w - 1))
+
+        // ---- score every stored session at the same slot offsets
+        array<float> scores = array.new<float>(0)
+        array<float> corrs  = array.new<float>(0)
+        array<float> ratios = array.new<float>(0)
+        array<int>   srcRow = array.new<int>(0)
+        float bestPos = 0.0
+        float bestNeg = 0.0
+
+        for r = 0 to filled - 1
+            float cBase = matrix.get(hist, r, lo)
+            float cEnd  = matrix.get(hist, r, SLOTS - 1)
+            if not na(cBase) and not na(cEnd)
+                float cMean = 0.0
+                for i = lo to hi
+                    cMean += matrix.get(hist, r, i) - cBase
+                cMean /= w
+
+                float cov = 0.0
+                float cSs = 0.0
+                for i = lo to hi
+                    float a = array.get(tp, i - lo) - tMean
+                    float b = matrix.get(hist, r, i) - cBase - cMean
+                    cov += a * b
+                    cSs += b * b
+                float cSd = math.sqrt(cSs / w)
+                float corr = (tSd * cSd) > 1e-12 ? (cov / w) / (tSd * cSd) : 0.0
+
+                float cDm = (matrix.get(hist, r, hi) - matrix.get(hist, r, lo)) / (w - 1)
+                float cVs = 0.0
+                for i = lo + 1 to hi
+                    cVs += math.pow(matrix.get(hist, r, i) - matrix.get(hist, r, i - 1) - cDm, 2)
+                float cVol = math.sqrt(cVs / (w - 1))
+                float ratio = cVol > 1e-12 ? math.min(4.0, math.max(0.25, tVol / cVol)) : 1.0
+
+                bestPos := math.max(bestPos, corr)
+                bestNeg := math.min(bestNeg, corr)
+
+                // The inverse list is the same sorted vector read from the
+                // other end, so it costs nothing to have.
+                bool keep = useInv ? corr < 0 : corr > 0
+                if keep
+                    array.push(scores, math.abs(corr))
+                    array.push(corrs,  corr)
+                    array.push(ratios, ratio)
+                    array.push(srcRow, r)
+
+        int nSel = math.min(topK, array.size(scores))
+        if nSel > 0
+            array<int> ord = array.sort_indices(scores, order.descending)
+
+            // Pine draws at most 500 bars into the future.
+            int hz     = math.min(SLOTS - 1 - hi, 500)
+            int stride = math.max(1, int(hz / 100))
+            array<int> steps = array.new<int>(0)
+            for j = 0 to hz by stride
+                array.push(steps, j)
+            if array.get(steps, array.size(steps) - 1) != hz
+                array.push(steps, hz)
+            int nStep = array.size(steps)
+
+            color col = useInv ? colNeg : colPos
+            matrix<float> proj = matrix.new<float>(nSel, nStep, na)
+            int up = 0
+
+            for k = 0 to nSel - 1
+                int   idx = array.get(ord, k)
+                int   r   = array.get(srcRow, idx)
+                float sgn = array.get(corrs, idx) < 0 ? -1.0 : 1.0
+                float s   = (volScale ? array.get(ratios, idx) : 1.0) * sgn
+                float b   = matrix.get(hist, r, hi)
+
+                array<chart.point> pts = array.new<chart.point>(0)
+                for m = 0 to nStep - 1
+                    int   j = array.get(steps, m)
+                    float p = close * math.exp(s * (matrix.get(hist, r, hi + j) - b))
+                    matrix.set(proj, k, m, p)
+                    array.push(pts, chart.point.from_index(bar_index + j, p))
+
+                if matrix.get(proj, k, nStep - 1) > close
+                    up += 1
+                if showPaths
+                    array.push(pls, polyline.new(pts, line_color = color.new(col, 80),
+                         line_width = 1, xloc = xloc.bar_index))
+
+            // ---- 10-90 band across the selected analogs
+            if showBand and nSel >= 5
+                array<chart.point> loPts = array.new<chart.point>(0)
+                array<chart.point> hiPts = array.new<chart.point>(0)
+                for m = 0 to nStep - 1
+                    array<float> colv = array.new<float>(0)
+                    for k = 0 to nSel - 1
+                        array.push(colv, matrix.get(proj, k, m))
+                    array.sort(colv, order.ascending)
+                    int iLo = int(math.floor((nSel - 1) * 0.10))
+                    int iHi = int(math.ceil((nSel - 1) * 0.90))
+                    int x   = bar_index + array.get(steps, m)
+                    array.push(loPts, chart.point.from_index(x, array.get(colv, iLo)))
+                    array.push(hiPts, chart.point.from_index(x, array.get(colv, iHi)))
+                array.push(pls, polyline.new(loPts, line_color = color.new(col, 45),
+                     line_width = 1, xloc = xloc.bar_index))
+                array.push(pls, polyline.new(hiPts, line_color = color.new(col, 45),
+                     line_width = 1, xloc = xloc.bar_index))
+
+            // ---- median, dashed by convention: it is a central tendency of
+            //      disagreeing paths, not a forecast
+            array<chart.point> medPts = array.new<chart.point>(0)
+            for m = 0 to nStep - 1
+                array<float> colv = array.new<float>(0)
+                for k = 0 to nSel - 1
+                    array.push(colv, matrix.get(proj, k, m))
+                array.sort(colv, order.ascending)
+                array.push(medPts, chart.point.from_index(bar_index + array.get(steps, m),
+                     array.get(colv, int(nSel / 2))))
+            array.push(pls, polyline.new(medPts, line_color = col, line_width = 2,
+                 xloc = xloc.bar_index))
+
+            // ---- diagnostics
+            if showStats
+                float agree = math.max(up, nSel - up) / nSel * 100
+                bool ambiguous = bestPos > 0.85 and bestNeg < -0.85
+                string verdict = ambiguous ?
+                     "Window too short to discriminate — curve fitting" :
+                     agree < 60 ? "Analogs disagree — range only, no direction" :
+                     "Analogs broadly agree"
+                lbl := label.new(bar_index, close,
+                     text = str.format(
+                       "{0} sessions stored\nbest +{1,number,#.###}  /  {2,number,#.###}\n" +
+                       "{3,number,#}% of {4} close {5}\n{6}",
+                       filled, bestPos, bestNeg, agree, nSel,
+                       up > nSel - up ? "higher" : "lower", verdict),
+                     style = label.style_label_left,
+                     color = color.new(color.black, 20),
+                     textcolor = ambiguous or agree < 60 ? #F2B441 : #CCD8E4,
+                     size = size.small)
