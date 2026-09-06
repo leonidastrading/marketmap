@@ -13,7 +13,7 @@ import {
   SESSION_BARS,
   RTH_OPEN_BAR,
 } from "../lib/engine";
-import { syntheticCorpus, parseBars } from "../lib/data";
+import { syntheticCorpus, parseBars, fetchBars } from "../lib/data";
 
 /** 90 -> "1h 30m". Traders think in clock time, not bar counts. */
 function fmtDur(mins: number) {
@@ -32,6 +32,9 @@ export default function Page() {
   const [corpus, setCorpus] = useState<NormDay[] | null>(null);
   const [source, setSource] = useState("demo");
   const [error, setError] = useState<string | null>(null);
+  const [fetchStart, setFetchStart] = useState("2025-09-01");
+  const [fetchEnd, setFetchEnd] = useState("2026-09-01");
+  const [fetching, setFetching] = useState(false);
 
   const [targetIdx, setTargetIdx] = useState(0);
   const [t, setT] = useState(1020);
@@ -109,8 +112,8 @@ export default function Page() {
 
   const projection = useMemo(() => {
     if (!target || !matches || matches.length === 0) return null;
-    return project(target, history, matches, t);
-  }, [target, history, matches, t]);
+    return project(target, history, matches, t, result?.lo ?? t);
+  }, [target, history, matches, t, result]);
 
   // --- honesty metrics ------------------------------------------------------
   const diag = useMemo(() => {
@@ -142,28 +145,79 @@ export default function Page() {
     };
   }, [projection, target, result, t]);
 
-  function loadCsv(file: File) {
+  function loadDays(days: ReturnType<typeof parseBars>, label: string) {
+    if (days.length < 30) {
+      setError(`Only ${days.length} sessions parsed. Need at least 30 to scan.`);
+      return;
+    }
+    const norm = days.map(normalize);
+    setCorpus(norm);
+    setTargetIdx(norm.length - 1);
+    setSource(`${label} · ${days.length} sessions`);
+    setBt(null);
+  }
+
+  /**
+   * Read a CSV, transparently gunzipping when the name ends in .gz.
+   *
+   * A five-year 1-minute corpus is ~34 MB as text and ~7 MB gzipped, which is
+   * the difference between a file you can move around and one you can't.
+   * DecompressionStream streams it, so the compressed bytes are never held in
+   * memory alongside the decompressed text.
+   */
+  async function readCsvText(file: File): Promise<string> {
+    if (!/\.gz$/i.test(file.name)) return file.text();
+    if (typeof DecompressionStream === "undefined") {
+      throw new Error(
+        "This browser cannot decompress .gz. Gunzip the file and load the .csv."
+      );
+    }
+    const stream = file
+      .stream()
+      .pipeThrough(new DecompressionStream("gzip"));
+    return new Response(stream).text();
+  }
+
+  async function loadCsv(file: File) {
     setError(null);
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const days = parseBars(String(reader.result));
-        if (days.length < 30) {
-          setError(
-            `Only ${days.length} sessions parsed. Need at least 30 to scan.`
-          );
-          return;
-        }
-        const norm = days.map(normalize);
-        setCorpus(norm);
-        setTargetIdx(norm.length - 1);
-        setSource(`${file.name} · ${days.length} sessions`);
-        setBt(null);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not parse that file.");
-      }
-    };
-    reader.readAsText(file);
+    setFetching(true);
+    try {
+      loadDays(parseBars(await readCsvText(file)), file.name);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not parse that file.");
+    } finally {
+      setFetching(false);
+    }
+  }
+
+  async function fetchReal() {
+    setError(null);
+    setFetching(true);
+    try {
+      const days = await fetchBars(fetchStart, fetchEnd);
+      loadDays(days, `ES.c.0 ${fetchStart}→${fetchEnd}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Fetch failed.");
+    } finally {
+      setFetching(false);
+    }
+  }
+
+  /** Move n sessions through the corpus, clamped. */
+  function stepDay(n: number) {
+    if (!corpus) return;
+    setTargetIdx((i) => Math.max(0, Math.min(corpus.length - 1, i + n)));
+  }
+
+  /** Jump to the session on or immediately before an arbitrary date. */
+  function gotoDate(date: string) {
+    if (!corpus || !date) return;
+    let best = -1;
+    for (let i = 0; i < corpus.length; i++) {
+      if (corpus[i].date <= date) best = i;
+      else break;
+    }
+    if (best >= 0) setTargetIdx(best);
   }
 
   function runBacktest() {
@@ -201,11 +255,26 @@ export default function Page() {
               ? "Synthetic data — random walks, no real structure"
               : source}
           </span>
-          <button onClick={() => fileRef.current?.click()}>Load bars</button>
+          <input
+            type="date"
+            aria-label="Fetch from"
+            value={fetchStart}
+            onChange={(e) => setFetchStart(e.target.value)}
+          />
+          <input
+            type="date"
+            aria-label="Fetch to"
+            value={fetchEnd}
+            onChange={(e) => setFetchEnd(e.target.value)}
+          />
+          <button onClick={fetchReal} disabled={fetching}>
+            {fetching ? "Fetching…" : "Fetch ES"}
+          </button>
+          <button onClick={() => fileRef.current?.click()}>Load CSV</button>
           <input
             ref={fileRef}
             type="file"
-            accept=".csv,text/csv"
+            accept=".csv,.gz,text/csv,application/gzip"
             hidden
             onChange={(e) => e.target.files?.[0] && loadCsv(e.target.files[0])}
           />
@@ -230,26 +299,39 @@ export default function Page() {
         <aside>
           <div className="row">
             <label htmlFor="day">Session</label>
-            <select
-              id="day"
-              value={targetIdx}
-              onChange={(e) => setTargetIdx(+e.target.value)}
-            >
-              {corpus.map((d, i) =>
-                i > 40 ? (
-                  <option key={d.date} value={i}>
-                    {d.date}
-                  </option>
-                ) : null
-              )}
-            </select>
+            <div className="btns">
+              <button onClick={() => stepDay(-1)} disabled={targetIdx <= 0}>
+                ‹ Prev
+              </button>
+              <input
+                id="day"
+                type="date"
+                value={target.date}
+                min={corpus[0].date}
+                max={corpus[corpus.length - 1].date}
+                onChange={(e) => gotoDate(e.target.value)}
+              />
+              <button
+                onClick={() => stepDay(1)}
+                disabled={targetIdx >= corpus.length - 1}
+              >
+                Next ›
+              </button>
+            </div>
+            <p className={history.length < 20 ? "flag" : "note"}>
+              {history.length < 20
+                ? `Only ${history.length} sessions precede ${target.date}. Step forward, or load a corpus that starts earlier.`
+                : `${history.length} sessions precede this one${
+                    result ? `, ${result.candidates} eligible after filters` : ""
+                  }. Nothing dated ${target.date} or later can enter the match.`}
+            </p>
           </div>
 
           <div className="row">
             <label>
               Window{" "}
               <b>
-                {barLabel(fromBar)}\u2013{barLabel(t)} \u00b7 {fmtDur(windowMins)}
+                {barLabel(fromBar)}&ndash;{barLabel(t)} &middot; {fmtDur(windowMins)}
               </b>
             </label>
 

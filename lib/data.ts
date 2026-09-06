@@ -72,6 +72,44 @@ export function syntheticCorpus(days: number, seed = 42): DayPath[] {
 }
 
 /**
+ * Pull real bars through the /api/bars proxy and parse them into sessions.
+ *
+ * The proxy keeps DATABENTO_API_KEY server-side, so nothing sensitive reaches
+ * the browser. It serves Databento's *historical* endpoint, which lags roughly
+ * 24 hours — fine for corpus building and replay, useless for a live tail.
+ *
+ * Throws with the server's own message on failure, including the 501 you get
+ * when the key has not been set on the deployment.
+ */
+export async function fetchBars(
+  start: string,
+  end: string,
+  symbol = "ES.c.0"
+): Promise<DayPath[]> {
+  const q = new URLSearchParams({ start, symbol });
+  if (end) q.set("end", end);
+
+  const r = await fetch(`/api/bars?${q}`);
+  if (!r.ok) {
+    let msg = `Request failed (${r.status}).`;
+    try {
+      const j = await r.json();
+      if (j?.error) msg = j.fix ? `${j.error} ${j.fix}` : String(j.error);
+    } catch {
+      // Non-JSON error body; the status line is all we have.
+    }
+    throw new Error(msg);
+  }
+
+  const csv = await r.text();
+  const days = parseBars(csv);
+  if (days.length === 0) {
+    throw new Error("No sessions parsed from that range.");
+  }
+  return days;
+}
+
+/**
  * Parse 1-minute bars into session-aligned days.
  *
  * Expects `timestamp,close` or Databento's `ts_event,...,close` shape. The

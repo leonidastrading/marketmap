@@ -147,7 +147,8 @@ input[type="range"]:disabled {
 }
 
 select,
-button {
+button,
+input[type="date"] {
   font: inherit;
   font-size: 13px;
   color: var(--ink);
@@ -156,6 +157,21 @@ button {
   border-radius: 3px;
   padding: 6px 10px;
   cursor: pointer;
+}
+
+/* Without this the native calendar glyph renders black-on-dark. */
+input[type="date"] {
+  color-scheme: dark;
+  min-width: 0;
+}
+
+.btns input[type="date"] {
+  flex: 1.4;
+  text-align: center;
+}
+
+.meta input[type="date"] {
+  padding: 5px 8px;
 }
 
 select {

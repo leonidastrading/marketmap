@@ -84,6 +84,10 @@ export default function Chart({
         bump(projection.p10[j]);
         bump(projection.p90[j]);
       }
+      for (let j = 0; j < projection.backP10.length; j++) {
+        bump(projection.backP10[j]);
+        bump(projection.backP90[j]);
+      }
     }
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) return;
     const pad = (hi - lo) * 0.08 || 1;
@@ -183,18 +187,53 @@ export default function Chart({
       bandFill(p.p10, p.p90, inverse ? C.bandNeg : C.band);
       bandFill(p.p25, p.p75, inverse ? C.bandNegInner : C.bandInner);
 
+      // Backward half. Same anchor at t, so this converges to a point at the
+      // "now" line and opens leftward — the width at any bar is the spread of
+      // the analogs against a window they were selected to fit, which is the
+      // honest picture of how good the match actually is.
+      const bh = p.backP10.length;
+      const backBand = (a: Float32Array, b: Float32Array, fill: string) => {
+        g.fillStyle = fill;
+        g.beginPath();
+        for (let j = 0; j < bh; j++) g.lineTo(X(p.backFrom + j), Y(a[j]));
+        for (let j = bh - 1; j >= 0; j--) g.lineTo(X(p.backFrom + j), Y(b[j]));
+        g.closePath();
+        g.fill();
+      };
+      backBand(p.backP10, p.backP90, inverse ? C.bandNeg : C.band);
+      backBand(p.backP25, p.backP75, inverse ? C.bandNegInner : C.bandInner);
+
       if (showLines) {
-        for (const l of p.lines) {
-          line(
-            (i) => [X(t + i), Y(l.path[i])],
-            0,
-            h - 1,
-            l.inverse ? C.neg : C.pos,
-            1,
-            0.16
-          );
+        for (let k = 0; k < p.lines.length; k++) {
+          const l = p.lines[k];
+          const stroke = l.inverse ? C.neg : C.pos;
+          line((i) => [X(t + i), Y(l.path[i])], 0, h - 1, stroke, 1, 0.16);
+          const back = p.backLines[k];
+          if (back) {
+            line(
+              (i) => [X(p.backFrom + i), Y(back[i])],
+              0,
+              bh - 1,
+              stroke,
+              1,
+              0.12
+            );
+          }
         }
       }
+
+      // Median across the fitted window, dashed to match the forward median so
+      // the two read as one curve hinged on "now".
+      g.setLineDash([5, 4]);
+      line(
+        (i) => [X(p.backFrom + i), Y(p.backP50[i])],
+        0,
+        bh - 1,
+        inverse ? C.neg : C.pos,
+        1.4,
+        0.75
+      );
+      g.setLineDash([]);
 
       // Ensemble median, dashed — dashed because it is a central tendency of
       // disagreeing paths, not a forecast.

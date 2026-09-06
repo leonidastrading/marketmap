@@ -110,6 +110,8 @@ export interface ScanResult {
   negative: Match[];
   /** Best |corr| found — useful as a noise diagnostic. */
   bestAbsCorr: number;
+  /** Sessions that actually passed every eligibility filter and were scored. */
+  candidates: number;
 }
 
 interface WindowStats {
@@ -181,7 +183,11 @@ export function scan(
 
   for (let d = 0; d < corpus.length; d++) {
     const cand = corpus[d];
-    if (cand.date === target.date) continue;
+    // No lookahead, enforced here rather than by the caller slicing the corpus.
+    // A candidate dated on or after the target is either the target itself or a
+    // session that had not happened yet, and neither may inform the match.
+    // String compare is correct for zero-padded YYYY-MM-DD.
+    if (cand.date >= target.date) continue;
     if (cand.lastReal < hi) continue;
     if (
       opts.excludeNearDays &&
@@ -248,7 +254,7 @@ export function scan(
   let bestAbsCorr = 0;
   for (const m of results) bestAbsCorr = Math.max(bestAbsCorr, Math.abs(m.corr));
 
-  return { lo, hi, positive, negative, bestAbsCorr };
+  return { lo, hi, positive, negative, bestAbsCorr, candidates: results.length };
 }
 
 function clamp(v: number, lo: number, hi: number) {
@@ -267,6 +273,20 @@ export interface Projection {
   p50: Float32Array;
   p75: Float32Array;
   p90: Float32Array;
+
+  // --- backward half: the same analogs over the matching window ------------
+  // Drawn left of "now" so the fit is visible rather than asserted. Each back
+  // path shares the anchor at t with its forward counterpart, so the two halves
+  // join continuously. Index 0 is bar `backFrom`, the last index is bar t.
+  /** Bar index the backward paths start from (== the scan window's lo). */
+  backFrom: number;
+  /** Backward price paths, aligned index-for-index with `lines`. */
+  backLines: Float32Array[];
+  backP10: Float32Array;
+  backP25: Float32Array;
+  backP50: Float32Array;
+  backP75: Float32Array;
+  backP90: Float32Array;
 }
 
 /**
@@ -286,17 +306,26 @@ export function project(
   corpus: NormDay[],
   matches: Match[],
   t: number,
+  from = t,
   applyVolScaling = true
 ): Projection {
   const n = target.r.length;
   const horizon = n - t;
   const anchorPrice = target.closes[t];
 
+  const backFrom = clampInt(from, 0, t);
+  const backLen = t - backFrom + 1;
+
+  // Both halves use the same anchor (cand.r[t]) and the same signed vol scale,
+  // so an analog's backward and forward segments are one continuous curve that
+  // passes exactly through today's price at t.
+  const scaleOf = (m: Match) =>
+    (applyVolScaling ? m.volRatio : 1) * (m.inverse ? -1 : 1);
+
   const lines = matches.map((m) => {
     const cand = corpus[m.dayIndex];
     const base = cand.r[t];
-    const sign = m.inverse ? -1 : 1;
-    const s = (applyVolScaling ? m.volRatio : 1) * sign;
+    const s = scaleOf(m);
     const path = new Float32Array(horizon);
     for (let j = 0; j < horizon; j++) {
       path[j] = anchorPrice * Math.exp(s * (cand.r[t + j] - base));
@@ -304,17 +333,49 @@ export function project(
     return { date: m.date, corr: m.corr, inverse: m.inverse, path };
   });
 
+  const backLines = matches.map((m) => {
+    const cand = corpus[m.dayIndex];
+    const base = cand.r[t];
+    const s = scaleOf(m);
+    const path = new Float32Array(backLen);
+    for (let j = 0; j < backLen; j++) {
+      path[j] = anchorPrice * Math.exp(s * (cand.r[backFrom + j] - base));
+    }
+    return path;
+  });
+
   const mk = () => new Float32Array(horizon);
+  const mkBack = () => new Float32Array(backLen);
   const mean = mk();
   const p10 = mk();
   const p25 = mk();
   const p50 = mk();
   const p75 = mk();
   const p90 = mk();
+  const backP10 = mkBack();
+  const backP25 = mkBack();
+  const backP50 = mkBack();
+  const backP75 = mkBack();
+  const backP90 = mkBack();
 
-  if (lines.length === 0) {
-    return { from: t, lines, mean, p10, p25, p50, p75, p90 };
-  }
+  const empty: Projection = {
+    from: t,
+    lines,
+    mean,
+    p10,
+    p25,
+    p50,
+    p75,
+    p90,
+    backFrom,
+    backLines,
+    backP10,
+    backP25,
+    backP50,
+    backP75,
+    backP90,
+  };
+  if (lines.length === 0) return empty;
 
   const weights = matches.map((m) => Math.max(1e-6, m.score));
   const wsum = weights.reduce((a, b) => a + b, 0);
@@ -335,7 +396,21 @@ export function project(
     p90[j] = quantile(sorted, 0.9);
   }
 
-  return { from: t, lines, mean, p10, p25, p50, p75, p90 };
+  for (let j = 0; j < backLen; j++) {
+    for (let k = 0; k < backLines.length; k++) col[k] = backLines[k][j];
+    const sorted = Array.from(col).sort((a, b) => a - b);
+    backP10[j] = quantile(sorted, 0.1);
+    backP25[j] = quantile(sorted, 0.25);
+    backP50[j] = quantile(sorted, 0.5);
+    backP75[j] = quantile(sorted, 0.75);
+    backP90[j] = quantile(sorted, 0.9);
+  }
+
+  return empty;
+}
+
+function clampInt(v: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, Math.round(v)));
 }
 
 function quantile(sorted: number[], q: number): number {

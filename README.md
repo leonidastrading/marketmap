@@ -20,9 +20,23 @@ no serverless compute in the hot path — dragging the lookback slider re-scans
 
 ## Getting data
 
-Neither TradingView nor Schwab can supply the history. TradingView has no data
-export API. Schwab has no futures bars at all and only ~30 days of 1-minute
-equity data.
+The app boots on a synthetic corpus so it runs before you have paid for
+anything. The header says so in orange. There are two ways to replace it with
+real ES bars.
+
+### In-app fetch
+
+Set `DATABENTO_API_KEY` in Vercel → Settings → Environment Variables and
+redeploy. The date pair and **Fetch ES** in the header pull `ES.c.0` through
+`/api/bars`, which keeps the key server-side.
+
+Each press is a billed Databento query. The default range is one year, which is
+roughly 350k one-minute bars and a ~20 MB CSV. Wider ranges bill more, take
+longer, and get heavy for a serverless response to stream, so use the script
+below for a full multi-year backfill rather than pulling five years through the
+button.
+
+### Script
 
 ```bash
 pip install databento
@@ -31,10 +45,27 @@ python scripts/backfill.py --start 2021-01-01 --end 2026-09-01
 ```
 
 The script prints the exact cost from a free metadata call and asks before
-spending anything. Load the resulting CSV with the "Load bars" button.
+spending anything. Load the resulting CSV with the **Load CSV** button.
+
+Neither TradingView nor Schwab can supply this history. TradingView has no data
+export API. Schwab has no futures bars at all and only ~30 days of 1-minute
+equity data.
 
 Any CSV with a timestamp column (`ts_event` / `timestamp` / `time`) and a
 `close` column will load. ISO 8601 and bare epoch integers both work.
+
+## Browsing sessions
+
+The **Session** row steps through the corpus a day at a time, or jumps to any
+date. A date that is not a session snaps back to the most recent one before it.
+
+Matching never sees the present or the future. `scan()` drops any candidate
+dated on or after the target, so stepping back to test an old session gives the
+same answer it would have given on the day — the guard lives in the engine, not
+in how the caller happens to slice the corpus. `excludeNearDays` additionally
+drops sessions within three days, since adjacent days share too much regime to
+be independent evidence. The Session row reports how many candidates survived
+both filters.
 
 ### Contract roll
 
