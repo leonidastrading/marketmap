@@ -10,10 +10,12 @@ import {
   Metric,
   NormDay,
   BacktestResult,
+  DayPath,
   SESSION_BARS,
   RTH_OPEN_BAR,
 } from "../lib/engine";
 import { syntheticCorpus, parseBars, fetchBars } from "../lib/data";
+import WeeklyStage from "../components/WeeklyStage";
 
 /** 90 -> "1h 30m". Traders think in clock time, not bar counts. */
 function fmtDur(mins: number) {
@@ -30,6 +32,9 @@ function barLabel(bar: number) {
 
 export default function Page() {
   const [corpus, setCorpus] = useState<NormDay[] | null>(null);
+  // The weekly stage concatenates raw sessions, so it needs the unnormalized
+  // paths -- normalize() gap-fills, and filled bars must not become week data.
+  const [rawDays, setRawDays] = useState<DayPath[]>([]);
   const [source, setSource] = useState("demo");
   const [error, setError] = useState<string | null>(null);
   const [fetchStart, setFetchStart] = useState("2025-09-01");
@@ -54,6 +59,7 @@ export default function Page() {
     const raw = syntheticCorpus(1250);
     const norm = raw.map(normalize);
     setCorpus(norm);
+    setRawDays(raw);
     setTargetIdx(norm.length - 1);
   }, []);
 
@@ -152,6 +158,7 @@ export default function Page() {
     }
     const norm = days.map(normalize);
     setCorpus(norm);
+    setRawDays(days);
     setTargetIdx(norm.length - 1);
     setSource(`${label} · ${days.length} sessions`);
     setBt(null);
@@ -591,6 +598,8 @@ export default function Page() {
           )}
         </div>
       </section>
+
+      <WeeklyStage days={rawDays} />
     </main>
   );
 }

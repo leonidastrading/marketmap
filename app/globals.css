@@ -467,3 +467,54 @@ dd {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
+
+/* ---- weekly stage ---------------------------------------------------- */
+
+.weekly {
+  margin-top: 34px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.wk-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.wk-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.wk-head .seg {
+  width: 210px;
+}
+
+.wk-head .note {
+  margin: 0;
+}
+
+/* Five sessions in the same pixel width, so it needs the height to stay
+   legible. */
+.chart-wk {
+  height: 380px;
+}
+
+.wk-matches {
+  margin-top: 16px;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+@media (max-width: 900px) {
+  .chart-wk {
+    height: 280px;
+  }
+}

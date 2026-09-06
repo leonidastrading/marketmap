@@ -4,7 +4,6 @@ import { useEffect, useRef } from "react";
 import {
   NormDay,
   Projection,
-  SESSION_BARS,
   RTH_OPEN_BAR,
   RTH_CLOSE_BAR,
 } from "../lib/engine";
@@ -25,6 +24,21 @@ const C = {
   bandNegInner: "rgba(232, 97, 140, 0.18)",
 };
 
+export interface Mark {
+  bar: number;
+  label: string;
+  /** Drawn in the brighter grid colour — use for the one line that matters. */
+  strong?: boolean;
+}
+
+/** Session landmarks for the intraday chart. */
+export const DAILY_MARKS: Mark[] = [
+  { bar: 0, label: "18:00" },
+  { bar: 360, label: "00:00" },
+  { bar: RTH_OPEN_BAR, label: "09:30", strong: true },
+  { bar: RTH_CLOSE_BAR, label: "16:00" },
+];
+
 interface Props {
   target: NormDay;
   t: number;
@@ -33,6 +47,8 @@ interface Props {
   showOutcome: boolean;
   showLines: boolean;
   windowLo: number;
+  /** Defaults to the intraday session landmarks. */
+  marks?: Mark[];
 }
 
 export default function Chart({
@@ -43,6 +59,7 @@ export default function Chart({
   showOutcome,
   showLines,
   windowLo,
+  marks = DAILY_MARKS,
 }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -60,6 +77,10 @@ export default function Chart({
     const g = cv.getContext("2d")!;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, W, H);
+
+    // Bars come from the data: 1380 for a session, 6900 for a 24h week,
+    // 1950 for an RTH week. Nothing here assumes which.
+    const BARS = target.closes.length;
 
     const padL = 8;
     const padR = 62;
@@ -79,7 +100,7 @@ export default function Chart({
     };
     for (let i = 0; i <= Math.min(t, target.lastReal); i++) bump(target.closes[i]);
     if (showOutcome) {
-      for (let i = t; i < SESSION_BARS; i++) bump(target.closes[i]);
+      for (let i = t; i < BARS; i++) bump(target.closes[i]);
     }
     if (projection) {
       for (let j = 0; j < projection.p10.length; j++) {
@@ -96,7 +117,7 @@ export default function Chart({
     lo -= pad;
     hi += pad;
 
-    const X = (bar: number) => padL + (bar / (SESSION_BARS - 1)) * plotW;
+    const X = (bar: number) => padL + (bar / (BARS - 1)) * plotW;
     const Y = (p: number) => padT + (1 - (p - lo) / (hi - lo)) * plotH;
 
     // ---- grid ------------------------------------------------------------
@@ -119,17 +140,12 @@ export default function Chart({
       g.fillText(p.toFixed(2), padL + plotW + 8, y);
     }
 
-    // Session landmarks carry more information than evenly spaced x ticks.
-    const marks: [number, string][] = [
-      [0, "18:00"],
-      [360, "00:00"],
-      [RTH_OPEN_BAR, "09:30"],
-      [RTH_CLOSE_BAR, "16:00"],
-    ];
+    // Landmarks carry more information than evenly spaced x ticks.
     g.textAlign = "center";
-    for (const [bar, label] of marks) {
+    for (const { bar, label, strong } of marks) {
+      if (bar < 0 || bar >= BARS) continue;
       const x = Math.round(X(bar)) + 0.5;
-      g.strokeStyle = bar === RTH_OPEN_BAR ? C.gridStrong : C.grid;
+      g.strokeStyle = strong ? C.gridStrong : C.grid;
       g.beginPath();
       g.moveTo(x, padT);
       g.lineTo(x, padT + plotH);
@@ -255,7 +271,7 @@ export default function Chart({
       line(
         (i) => [X(i), Y(target.closes[i])],
         t,
-        Math.min(target.lastReal, SESSION_BARS - 1),
+        Math.min(target.lastReal, BARS - 1),
         C.outcome,
         1.5
       );
@@ -287,7 +303,7 @@ export default function Chart({
     g.beginPath();
     g.arc(nx, py, 3, 0, Math.PI * 2);
     g.fill();
-  }, [target, t, projection, inverse, showOutcome, showLines, windowLo]);
+  }, [target, t, projection, inverse, showOutcome, showLines, windowLo, marks]);
 
   return <canvas ref={ref} />;
 }
