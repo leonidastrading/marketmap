@@ -517,3 +517,17 @@ dd {
     height: 560px;
   }
 }
+
+.matches li.hd {
+  color: var(--ink-dim);
+  border-bottom-color: var(--ink-dim);
+}
+
+.matches.cov li {
+  grid-template-columns: 1fr auto auto;
+}
+
+.matches.cov .c {
+  min-width: 52px;
+  text-align: right;
+}

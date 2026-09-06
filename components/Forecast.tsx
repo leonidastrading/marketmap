@@ -10,7 +10,7 @@ import {
   trainModel,
 } from "../lib/model";
 
-export type Source = "analogs" | "model";
+export type Source = "analogs" | "model" | "bands";
 export type Which = "ridge" | "mlp";
 
 export interface Forecast {

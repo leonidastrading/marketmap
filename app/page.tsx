@@ -18,6 +18,7 @@ import { syntheticCorpus, parseBars, fetchBars } from "../lib/data";
 import WeeklyStage from "../components/WeeklyStage";
 import { saveCorpus, loadCorpus, clearCorpus } from "../lib/store";
 import { ForecastPanel, Source, useForecast } from "../components/Forecast";
+import { BandsPanel, useBands } from "../components/Bands";
 
 /** 90 -> "1h 30m". Traders think in clock time, not bar counts. */
 function fmtDur(mins: number) {
@@ -143,8 +144,13 @@ export default function Page() {
   }, [target, history, matches, t, result]);
 
   const fc = useForecast(windowMins, locked && fromBar === 0);
+  const bands = useBands();
   const projection =
-    src === "model" && target ? fc.projectionFor(target, t) : analogProjection;
+    src === "model" && target
+      ? fc.projectionFor(target, t)
+      : src === "bands" && corpus
+        ? bands.projectionFor(corpus, targetIdx, t)
+        : analogProjection;
 
   // --- honesty metrics ------------------------------------------------------
   const diag = useMemo(() => {
@@ -408,6 +414,12 @@ export default function Page() {
               >
                 Model
               </button>
+              <button
+                className={src === "bands" ? "on" : ""}
+                onClick={() => setSrc("bands")}
+              >
+                Bands
+              </button>
             </div>
             {src === "model" && !fc.trained && (
               <p className="flag">
@@ -617,6 +629,16 @@ export default function Page() {
             ))}
           </ul>
         </div>
+
+        <BandsPanel
+          bands={bands}
+          corpus={corpus}
+          history={history}
+          targetIdx={targetIdx}
+          t={t}
+          unit="sessions"
+          targetDate={target.date}
+        />
 
         <ForecastPanel
           fc={fc}

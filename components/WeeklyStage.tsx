@@ -21,6 +21,7 @@ import {
   weekMarks,
 } from "../lib/week";
 import { ForecastPanel, Source, useForecast } from "./Forecast";
+import { BandsPanel, useBands } from "./Bands";
 
 /**
  * The weekly scanner: same engine, longer paths.
@@ -90,9 +91,17 @@ export default function WeeklyStage({ days }: { days: DayPath[] }) {
   }, [target, history, matches, t, result]);
 
   const fc = useForecast(t - fromBar + 1, locked && fromBar === 0);
-  fcReset.current = fc.reset;
+  const bands = useBands();
+  fcReset.current = () => {
+    fc.reset();
+    bands.reset();
+  };
   const projection =
-    src === "model" && target ? fc.projectionFor(target, t) : analogProjection;
+    src === "model" && target
+      ? fc.projectionFor(target, t)
+      : src === "bands"
+        ? bands.projectionFor(norm, safeIdx, t)
+        : analogProjection;
 
   if (norm.length === 0) {
     return (
@@ -237,6 +246,12 @@ export default function WeeklyStage({ days }: { days: DayPath[] }) {
               >
                 Model
               </button>
+              <button
+                className={src === "bands" ? "on" : ""}
+                onClick={() => setSrc("bands")}
+              >
+                Bands
+              </button>
             </div>
           </div>
 
@@ -374,6 +389,16 @@ export default function WeeklyStage({ days }: { days: DayPath[] }) {
       </div>
 
       <div className="wk-readout">
+        <BandsPanel
+          bands={bands}
+          corpus={norm}
+          history={history}
+          targetIdx={safeIdx}
+          t={t}
+          unit="weeks"
+          targetDate={target.date}
+        />
+
         <ForecastPanel
           fc={fc}
           history={history}
