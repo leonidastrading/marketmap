@@ -2,7 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Chart from "./Chart";
-import { DayPath, Metric, normalize, project, scan } from "../lib/engine";
+import {
+  BacktestResult,
+  DayPath,
+  Metric,
+  backtest,
+  normalize,
+  project,
+  scan,
+} from "../lib/engine";
 import {
   DAY_BARS,
   WEEK_BARS,
@@ -32,6 +40,8 @@ export default function WeeklyStage({ days }: { days: DayPath[] }) {
   const [inverse, setInverse] = useState(false);
   const [showOutcome, setShowOutcome] = useState(false);
   const [showLines, setShowLines] = useState(true);
+  const [bt, setBt] = useState<BacktestResult | null>(null);
+  const [btRunning, setBtRunning] = useState(false);
 
   const per = DAY_BARS[mode];
   const bars = WEEK_BARS[mode];
@@ -47,6 +57,7 @@ export default function WeeklyStage({ days }: { days: DayPath[] }) {
     setFromBar(0);
     setT(DAY_BARS[mode] * 3); // Thursday open: match Mon-Wed, project Thu-Fri
     setLocked(true);
+    setBt(null); // 24h and cash-only results are not comparable
   }, [mode, built.weeks.length]);
 
   const safeIdx = Math.min(idx, Math.max(0, norm.length - 1));
@@ -96,6 +107,26 @@ export default function WeeklyStage({ days }: { days: DayPath[] }) {
   function moveFrom(next: number) {
     setFromBar(Math.max(0, Math.min(t - 30, next)));
   }
+  function runBacktest() {
+    if (norm.length < 40) return;
+    setBtRunning(true);
+    setTimeout(() => {
+      setBt(
+        backtest(norm, {
+          t,
+          windowMinutes: t - fromBar + 1,
+          anchored: locked && fromBar === 0,
+          topK,
+          metric,
+          excludeNearDays: 7,
+          startIndex: Math.floor(norm.length * 0.5),
+          maxDays: 400,
+        })
+      );
+      setBtRunning(false);
+    }, 20);
+  }
+
   function stepWeek(n: number) {
     setIdx(Math.max(0, Math.min(norm.length - 1, safeIdx + n)));
   }
@@ -314,25 +345,85 @@ export default function WeeklyStage({ days }: { days: DayPath[] }) {
         </aside>
       </div>
 
-      {result && matches && matches.length > 0 && (
-        <div className="wk-matches">
-          <span className="note">
-            Best {inverse ? "inverse " : ""}matches ·{" "}
-            {mode === "24h" ? "24 hour" : "cash only"}
-          </span>
-          <ul className="matches">
-            {matches.slice(0, 6).map((m) => (
-              <li key={m.date}>
-                <span className="d">week of {m.date}</span>
-                <span className={`c ${m.inverse ? "neg" : "pos"}`}>
-                  {m.corr.toFixed(3)}
-                </span>
-                <span className="v">×{m.volRatio.toFixed(2)}</span>
-              </li>
-            ))}
-          </ul>
+      <div className="wk-readout">
+        {result && matches && matches.length > 0 && (
+          <div className="panel">
+            <h2>
+              Best {inverse ? "inverse " : ""}matches
+            </h2>
+            <ul className="matches">
+              {matches.slice(0, 6).map((m) => (
+                <li key={m.date}>
+                  <span className="d">week of {m.date}</span>
+                  <span className={`c ${m.inverse ? "neg" : "pos"}`}>
+                    {m.corr.toFixed(3)}
+                  </span>
+                  <span className="v">×{m.volRatio.toFixed(2)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="panel">
+          <h2>Does it work?</h2>
+          <p className="note">
+            Walk-forward from the midpoint. Each test week sees only weeks that
+            closed before it, at the same cursor and window as above.
+          </p>
+          <button
+            className="primary"
+            onClick={runBacktest}
+            disabled={btRunning || norm.length < 40}
+          >
+            {btRunning ? "Running…" : "Run backtest"}
+          </button>
+          {norm.length < 40 && (
+            <p className="flag">
+              Needs 40+ weeks to split into train and test. This corpus has{" "}
+              {norm.length}.
+            </p>
+          )}
+          {bt && (
+            <>
+              <dl className="bt">
+                <div>
+                  <dt>Weeks tested</dt>
+                  <dd>{bt.n}</dd>
+                </div>
+                <div>
+                  <dt>Direction hit rate</dt>
+                  <dd>{(bt.hitRate * 100).toFixed(1)}%</dd>
+                </div>
+                <div>
+                  <dt>Always-long baseline</dt>
+                  <dd>{(bt.baselineLong * 100).toFixed(1)}%</dd>
+                </div>
+                <div>
+                  <dt>Momentum baseline</dt>
+                  <dd>{(bt.baselineMomentum * 100).toFixed(1)}%</dd>
+                </div>
+                <div>
+                  <dt>Mean best |corr|</dt>
+                  <dd>{bt.meanBestCorr.toFixed(3)}</dd>
+                </div>
+                <div className="hi">
+                  <dt>Forward path correlation</dt>
+                  <dd>{bt.meanPathCorr.toFixed(4)}</dd>
+                </div>
+              </dl>
+              <p className="flag">
+                {bt.n} test weeks puts the standard error on hit rate near{" "}
+                {((0.5 / Math.sqrt(bt.n)) * 100).toFixed(1)} points. A weekly
+                corpus is inherently a fifth the size of the daily one over the
+                same history, so this band is wide — treat anything inside it as
+                indistinguishable from the baselines, and read the forward path
+                correlation instead.
+              </p>
+            </>
+          )}
         </div>
-      )}
+      </div>
     </section>
   );
 }

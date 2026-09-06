@@ -16,6 +16,7 @@ import {
 } from "../lib/engine";
 import { syntheticCorpus, parseBars, fetchBars } from "../lib/data";
 import WeeklyStage from "../components/WeeklyStage";
+import { saveCorpus, loadCorpus, clearCorpus } from "../lib/store";
 
 /** 90 -> "1h 30m". Traders think in clock time, not bar counts. */
 function fmtDur(mins: number) {
@@ -40,6 +41,7 @@ export default function Page() {
   const [fetchStart, setFetchStart] = useState("2025-09-01");
   const [fetchEnd, setFetchEnd] = useState("2026-09-01");
   const [fetching, setFetching] = useState(false);
+  const [cached, setCached] = useState(false);
 
   const [targetIdx, setTargetIdx] = useState(0);
   const [t, setT] = useState(1020);
@@ -54,13 +56,30 @@ export default function Page() {
   const [bt, setBt] = useState<BacktestResult | null>(null);
   const [btRunning, setBtRunning] = useState(false);
 
-  // Demo corpus so the tool is usable before real data lands.
+  // Prefer the last real corpus; fall back to synthetic so the tool is usable
+  // before any data lands. Cache misses are silent and expected.
   useEffect(() => {
-    const raw = syntheticCorpus(1250);
-    const norm = raw.map(normalize);
-    setCorpus(norm);
-    setRawDays(raw);
-    setTargetIdx(norm.length - 1);
+    let cancelled = false;
+    (async () => {
+      const cached = await loadCorpus();
+      if (cancelled) return;
+      if (cached && cached.days.length >= 30) {
+        const norm = cached.days.map(normalize);
+        setCorpus(norm);
+        setRawDays(cached.days);
+        setTargetIdx(norm.length - 1);
+        setSource(`${cached.source} · ${cached.days.length} sessions (cached)`);
+        return;
+      }
+      const raw = syntheticCorpus(1250);
+      const norm = raw.map(normalize);
+      setCorpus(norm);
+      setRawDays(raw);
+      setTargetIdx(norm.length - 1);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -161,6 +180,20 @@ export default function Page() {
     setRawDays(days);
     setTargetIdx(norm.length - 1);
     setSource(`${label} · ${days.length} sessions`);
+    setBt(null);
+    // Fire and forget: a failed cache write must never block the load.
+    saveCorpus(days, label).then((ok) => setCached(ok));
+  }
+
+  async function forget() {
+    await clearCorpus();
+    setCached(false);
+    const raw = syntheticCorpus(1250);
+    const norm = raw.map(normalize);
+    setCorpus(norm);
+    setRawDays(raw);
+    setTargetIdx(norm.length - 1);
+    setSource("demo");
     setBt(null);
   }
 
@@ -278,6 +311,11 @@ export default function Page() {
             {fetching ? "Fetching…" : "Fetch ES"}
           </button>
           <button onClick={() => fileRef.current?.click()}>Load CSV</button>
+          {(cached || source.includes("cached")) && (
+            <button onClick={forget} title="Clear the cached corpus">
+              Forget
+            </button>
+          )}
           <input
             ref={fileRef}
             type="file"

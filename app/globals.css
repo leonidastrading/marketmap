@@ -502,19 +502,18 @@ dd {
 /* Five sessions in the same pixel width, so it needs the height to stay
    legible. */
 .chart-wk {
-  height: 380px;
+  height: 760px;
 }
 
-.wk-matches {
-  margin-top: 16px;
-  max-width: 520px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
+.wk-readout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 20px;
+  margin-top: 22px;
 }
 
 @media (max-width: 900px) {
   .chart-wk {
-    height: 280px;
+    height: 560px;
   }
 }
