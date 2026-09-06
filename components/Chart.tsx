@@ -14,7 +14,9 @@ const C = {
   gridStrong: "#2C3D4F",
   axis: "#6B7D91",
   today: "#F2B441",
-  future: "#4A5866",
+  // The realized path after "now". Magenta at hue ~291 rather than a pink near
+  // the rose used for inverse analogs (~340), so the two never read as related.
+  outcome: "#E040FB",
   pos: "#4CC9E8",
   neg: "#E8618C",
   band: "rgba(76, 201, 232, 0.10)",
@@ -254,7 +256,7 @@ export default function Chart({
         (i) => [X(i), Y(target.closes[i])],
         t,
         Math.min(target.lastReal, SESSION_BARS - 1),
-        C.future,
+        C.outcome,
         1.5
       );
     }

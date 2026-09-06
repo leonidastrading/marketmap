@@ -284,16 +284,61 @@ export default function Page() {
       {error && <div className="error">{error}</div>}
 
       <section className="stage">
-        <div className="chart">
-          <Chart
-            target={target}
-            t={t}
-            projection={projection}
-            inverse={inverse}
-            showOutcome={showOutcome}
-            showLines={showLines}
-            windowLo={result?.lo ?? 0}
-          />
+        <div className="plot">
+          <div className="chart">
+            <Chart
+              target={target}
+              t={t}
+              projection={projection}
+              inverse={inverse}
+              showOutcome={showOutcome}
+              showLines={showLines}
+              windowLo={result?.lo ?? 0}
+            />
+          </div>
+
+          {/*
+            The scrubber is inset by the canvas's own padL/padR so a thumb sits
+            directly beneath the bar it selects. Both inputs span the full bar
+            range rather than their usable range — a range input maps its thumb
+            across min..max, so a narrower max would compress the scale and
+            break the alignment. moveFrom/moveNow clamp instead.
+          */}
+          <div className="scrubber">
+            <div className="range2">
+              <div className="track" />
+              <div
+                className="fill"
+                style={{
+                  left: `${(fromBar / (SESSION_BARS - 1)) * 100}%`,
+                  right: `${100 - (t / (SESSION_BARS - 1)) * 100}%`,
+                }}
+              />
+              <input
+                aria-label="Window start"
+                type="range"
+                min={0}
+                max={SESSION_BARS - 1}
+                value={fromBar}
+                onChange={(e) => moveFrom(+e.target.value)}
+              />
+              <input
+                aria-label="Now"
+                type="range"
+                min={0}
+                max={SESSION_BARS - 1}
+                value={t}
+                onChange={(e) => moveNow(+e.target.value)}
+              />
+            </div>
+            <div className="scrubread">
+              Window{" "}
+              <b>
+                {barLabel(fromBar)}&ndash;{barLabel(t)} &middot;{" "}
+                {fmtDur(windowMins)}
+              </b>
+            </div>
+          </div>
         </div>
 
         <aside>
@@ -328,39 +373,7 @@ export default function Page() {
           </div>
 
           <div className="row">
-            <label>
-              Window{" "}
-              <b>
-                {barLabel(fromBar)}&ndash;{barLabel(t)} &middot; {fmtDur(windowMins)}
-              </b>
-            </label>
-
-            <div className="range2">
-              <div className="track" />
-              <div
-                className="fill"
-                style={{
-                  left: `${(fromBar / (SESSION_BARS - 1)) * 100}%`,
-                  right: `${100 - (t / (SESSION_BARS - 1)) * 100}%`,
-                }}
-              />
-              <input
-                aria-label="Window start"
-                type="range"
-                min={0}
-                max={SESSION_BARS - 45}
-                value={fromBar}
-                onChange={(e) => moveFrom(+e.target.value)}
-              />
-              <input
-                aria-label="Now"
-                type="range"
-                min={30}
-                max={SESSION_BARS - 30}
-                value={t}
-                onChange={(e) => moveNow(+e.target.value)}
-              />
-            </div>
+            <label>Window controls</label>
 
             <label className="check">
               <input
