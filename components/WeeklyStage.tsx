@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "./Chart";
 import {
   BacktestResult,
@@ -20,6 +20,7 @@ import {
   weekBarLabel,
   weekMarks,
 } from "../lib/week";
+import { ForecastPanel, Source, useForecast } from "./Forecast";
 
 /**
  * The weekly scanner: same engine, longer paths.
@@ -42,9 +43,12 @@ export default function WeeklyStage({ days }: { days: DayPath[] }) {
   const [showLines, setShowLines] = useState(true);
   const [bt, setBt] = useState<BacktestResult | null>(null);
   const [btRunning, setBtRunning] = useState(false);
+  const [src, setSrc] = useState<Source>("analogs");
 
   const per = DAY_BARS[mode];
   const bars = WEEK_BARS[mode];
+  // A model fitted on 6900-bar weeks is meaningless on 1950-bar weeks.
+  const fcReset = useRef<(() => void) | null>(null);
 
   const built = useMemo(() => buildWeeks(days, mode), [days, mode]);
   const norm = useMemo(() => built.weeks.map(normalize), [built.weeks]);
@@ -58,6 +62,7 @@ export default function WeeklyStage({ days }: { days: DayPath[] }) {
     setT(DAY_BARS[mode] * 3); // Thursday open: match Mon-Wed, project Thu-Fri
     setLocked(true);
     setBt(null); // 24h and cash-only results are not comparable
+    fcReset.current?.();
   }, [mode, built.weeks.length]);
 
   const safeIdx = Math.min(idx, Math.max(0, norm.length - 1));
@@ -79,10 +84,15 @@ export default function WeeklyStage({ days }: { days: DayPath[] }) {
 
   const matches = inverse ? result?.negative : result?.positive;
 
-  const projection = useMemo(() => {
+  const analogProjection = useMemo(() => {
     if (!target || !matches || matches.length === 0) return null;
     return project(target, history, matches, t, result?.lo ?? t);
   }, [target, history, matches, t, result]);
+
+  const fc = useForecast(t - fromBar + 1, locked && fromBar === 0);
+  fcReset.current = fc.reset;
+  const projection =
+    src === "model" && target ? fc.projectionFor(target, t) : analogProjection;
 
   if (norm.length === 0) {
     return (
@@ -212,6 +222,24 @@ export default function WeeklyStage({ days }: { days: DayPath[] }) {
         </div>
 
         <aside>
+          <div className="row">
+            <label>Forecast from</label>
+            <div className="seg">
+              <button
+                className={src === "analogs" ? "on" : ""}
+                onClick={() => setSrc("analogs")}
+              >
+                Analogs
+              </button>
+              <button
+                className={src === "model" ? "on" : ""}
+                onClick={() => setSrc("model")}
+              >
+                Model
+              </button>
+            </div>
+          </div>
+
           <div className="row">
             <label>Week of</label>
             <div className="btns">
@@ -346,6 +374,15 @@ export default function WeeklyStage({ days }: { days: DayPath[] }) {
       </div>
 
       <div className="wk-readout">
+        <ForecastPanel
+          fc={fc}
+          history={history}
+          testDays={norm.slice(safeIdx)}
+          t={t}
+          unit="weeks"
+          targetDate={target.date}
+        />
+
         {result && matches && matches.length > 0 && (
           <div className="panel">
             <h2>

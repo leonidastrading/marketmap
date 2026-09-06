@@ -17,6 +17,7 @@ import {
 import { syntheticCorpus, parseBars, fetchBars } from "../lib/data";
 import WeeklyStage from "../components/WeeklyStage";
 import { saveCorpus, loadCorpus, clearCorpus } from "../lib/store";
+import { ForecastPanel, Source, useForecast } from "../components/Forecast";
 
 /** 90 -> "1h 30m". Traders think in clock time, not bar counts. */
 function fmtDur(mins: number) {
@@ -42,6 +43,7 @@ export default function Page() {
   const [fetchEnd, setFetchEnd] = useState("2026-09-01");
   const [fetching, setFetching] = useState(false);
   const [cached, setCached] = useState(false);
+  const [src, setSrc] = useState<Source>("analogs");
 
   const [targetIdx, setTargetIdx] = useState(0);
   const [t, setT] = useState(1020);
@@ -135,10 +137,14 @@ export default function Page() {
 
   const matches = inverse ? result?.negative : result?.positive;
 
-  const projection = useMemo(() => {
+  const analogProjection = useMemo(() => {
     if (!target || !matches || matches.length === 0) return null;
     return project(target, history, matches, t, result?.lo ?? t);
   }, [target, history, matches, t, result]);
+
+  const fc = useForecast(windowMins, locked && fromBar === 0);
+  const projection =
+    src === "model" && target ? fc.projectionFor(target, t) : analogProjection;
 
   // --- honesty metrics ------------------------------------------------------
   const diag = useMemo(() => {
@@ -388,6 +394,29 @@ export default function Page() {
 
         <aside>
           <div className="row">
+            <label>Forecast from</label>
+            <div className="seg">
+              <button
+                className={src === "analogs" ? "on" : ""}
+                onClick={() => setSrc("analogs")}
+              >
+                Analogs
+              </button>
+              <button
+                className={src === "model" ? "on" : ""}
+                onClick={() => setSrc("model")}
+              >
+                Model
+              </button>
+            </div>
+            {src === "model" && !fc.trained && (
+              <p className="flag">
+                No model trained yet — train it in the Model panel below.
+              </p>
+            )}
+          </div>
+
+          <div className="row">
             <label htmlFor="day">Session</label>
             <div className="btns">
               <button onClick={() => stepDay(-1)} disabled={targetIdx <= 0}>
@@ -588,6 +617,15 @@ export default function Page() {
             ))}
           </ul>
         </div>
+
+        <ForecastPanel
+          fc={fc}
+          history={history}
+          testDays={corpus.slice(targetIdx)}
+          t={t}
+          unit="sessions"
+          targetDate={target.date}
+        />
 
         <div className="panel">
           <h2>Does it work?</h2>
